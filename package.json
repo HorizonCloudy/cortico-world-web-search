@@ -1,0 +1,38 @@
+{
+  "name": "cortico-world-web-search",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Cortico World: 网络搜索，基于 Anysearch / Tavily / Exa 聚合的 web_search 工具",
+  "license": "MIT",
+  "keywords": [
+    "cortico-world",
+    "cortico",
+    "web-search"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.28.62",
+  "main": "./src/index.ts",
+  "cortico": {
+    "kind": "world",
+    "api": 6,
+    "describe": "describe.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "describe.json"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "cortico": "^0.2.16",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
