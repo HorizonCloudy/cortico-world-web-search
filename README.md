@@ -1,29 +1,45 @@
-# cortico-world-web-search
+# cortico-world-web-search-multi
 
-Cortico World 插件：世界 id `web-search`，暴露一个网络搜索工具 `web_search`，基于 Anysearch / Tavily / Exa / Bocha / 阿里 IQS / 腾讯云 / 智谱 / Perplexity / Serper / Brave 聚合。
+Cortico World 插件：世界 id `web-search-multi`，暴露一个**多 provider 聚合**搜索工具 `web_search_multi`。同时对多家搜索 API 并行取结果，跨源按 url 去重，逐家可在配置面板开关。
+
+## 与官方 `cortico-world-websearch` 的分工
+
+官方包（`cortico-world-websearch`，内建 world id `websearch`）走 Brave + DeepSeek 两栈、单源优先、带 `mode` / `fresh` / `n` 等检索语义，适合「照着说的去搜一次」。
+
+本包是**多源聚合**：一次调用同时问多家、跨源去重、逐家开关，适合需要交叉验证或某一家被限流时自动由其余家兜底。两者工具名不冲突（`web_search` vs `web_search_multi`），可以同时装。
 
 ## 用途
 
-调用 `web_search` 按关键词在网上搜索，返回标题、网址和简介；可用 `max_results` 限制返回条数，最多 10 条。世界挂载时会推送 `web-search.started` 事件。
+调用 `web_search_multi` 按关键词在网上搜索，返回标题、网址和简介；可用 `max_results` 限制返回条数，最多 10 条。世界挂载时会推送 `web-search-multi.started` 事件。
 
-聚合行为：对所有开启且配有密钥的提供商并行调用，各自使用对应的宿主 secret，按 `url` 去重，截断到 `maxResults` 后返回；任一提供商失败自动跳过，不阻断其余提供商。
+聚合行为：
+
+- 只调用「开关打开 且（不需要密钥 或 密钥已配置）」的提供商，`Promise.all` 并行。
+- 每家的请求形状与结果路径按各自官方文档解析（见下表），不做「统一 POST + 顶层 results 数组」的猜测。
+- 按 `url` 去重（忽略大小写），再截断到 `maxResults`。
+- **单家失败不影响其他家**：失败只记一条 warn 到运行日志；拿不到 logger 时在回执末尾附一行「n 家提供商调用失败」。
+- 所有 fetch 带 `ToolCallContext.signal`，宿主放弃本次调用时立即中断。
 
 ## API key 怎么配置
 
-搜索密钥由宿主的 secrets 注入，不写入配置文件明文。handler 在 `getApiKey(name)` 中按提供商读取以下名之一：
+搜索密钥由宿主的 secrets 注入，不写入配置文件明文。handler 按提供商读取以下环境变量名：
 
-- `ANYSEARCH_API_KEY` — Anysearch（可选，缺失时匿名访问，受较低限速）
-- `TAVILY_API_KEY` — Tavily
-- `EXA_API_KEY` — Exa
-- `BOCHA_API_KEY` — Bocha
-- `ALI_IQS_API_KEY` — 阿里 IQS
-- `TENCENT_SEARCH_API_KEY` — 腾讯云联网搜索
-- `ZHIPU_API_KEY` — 智谱
-- `PERPLEXITY_API_KEY` — Perplexity
-- `SERPER_API_KEY` — Serper
-- `BRAVE_API_KEY` — Brave
-
-按提供商选用：Anysearch 端点可用配置 `worlds.web-search.endpoint` 覆盖；其余用固定官方端点。缺失全部密钥时，handler 抛出错误并提示配置。
+| 提供商 | 环境变量 | 是否必需 |
+| --- | --- | --- |
+| anysearch | `ANYSEARCH_API_KEY` | 可选（匿名可用，限速较低） |
+| tavily | `TAVILY_API_KEY` | 必需 |
+| exa | `EXA_API_KEY` | 必需 |
+| bocha | `BOCHA_API_KEY` | 必需 |
+| ali（阿里 IQS） | `ALI_IQS_API_KEY` | 必需 |
+| zhipu | `ZHIPU_API_KEY` | 必需 |
+| perplexity | `PERPLEXITY_API_KEY` | 必需 |
+| serper | `SERPER_API_KEY` | 必需 |
+| brave | `BRAVE_API_KEY` | 必需 |
+| mojeek | `MOJEEK_API_KEY` | 必需 |
+| youcom | `YDC_API_KEY` | 必需 |
+| linkup | `LINKUP_API_KEY` | 必需 |
+| firecrawl | `FIRECRAWL_API_KEY` | 必需 |
+| kimi | `MOONSHOT_API_KEY` | 必需 |
 
 在宿主中设置 secret（具体名随宿主而定，示例）：
 
@@ -33,48 +49,101 @@ BOCHA_API_KEY=你的密钥
 PERPLEXITY_API_KEY=你的密钥
 ```
 
+**tencent 未纳入**：腾讯云 WSA 需要 TC3-HMAC-SHA256 签名 + SecretId/SecretKey + region 四件套，`ctx.secret(name)` 是一名字一值，塞不进签名材料，也无法用 fixture 单测覆盖。留待后续版本。
+
+## 各家的请求与解析（按官方文档）
+
+| id | 方法 | URL | 鉴权 | 请求体/参数 | 结果路径 |
+| --- | --- | --- | --- | --- | --- |
+| `anysearch` | POST | `https://api.anysearch.com/v1/search`（官方固定端点） | `Authorization: Bearer`（可选） | `{query, max_results}` | `data.results[]` → `results[]` → `items[]`；`code` 非 0 视为失败 |
+| `tavily` | POST | `https://api.tavily.com/search` | body 内 `api_key` | `{query, max_results, api_key}` | `results[]` |
+| `exa` | POST | `https://api.exa.ai/search` | `x-api-key` 头 | `{query, numResults, contents:{highlights:true}}` | `results[]`（摘要取 `highlights[0]`） |
+| `bocha` | POST | `https://api.bochaai.com/v1/web-search` | `Authorization: Bearer` | `{query, count, summary:true}` | `data.webPages.value[]`（Bing 兼容，标题字段 `name`） |
+| `ali` | POST | `https://cloud-iqs.aliyuncs.com/search/unified` | `Authorization: Bearer` | `{query, engineType:'LiteAdvanced', contents:{summary:true}, advancedParams:{numResults}}` | `pageItems[]`（链接字段 `link`） |
+| `zhipu` | POST | `https://open.bigmodel.cn/api/paas/v4/web_search` | `Authorization: Bearer` | `{search_query, search_engine:'search_pro', count}` | `search_result[]`（链接字段 `link`） |
+| `perplexity` | POST | `https://api.perplexity.ai/search` | `Authorization: Bearer` | `{query, max_results}` | `results[]`（`snippet` 可能为空串） |
+| `serper` | POST | `https://google.serper.dev/search` | `X-API-KEY` 头 | `{q, num}` | `organic[]`，`answerBox` 有链接时排第一 |
+| `brave` | **GET** | `https://api.search.brave.com/res/v1/web/search?q=…&count=…` | `X-Subscription-Token` 头 | query string | `web.results[]`（摘要字段 `description`） |
+| `mojeek` | **GET** | `https://api.mojeek.com/search?q=…&t=…&fmt=json&api_key=…` | `api_key` 在 query string | GET query string | `response.results[]` → `results[]` 兜底；摘要字段 `desc` → `snippet`/`content` 兜底，条数参数 `t` |
+| `youcom` | POST | `https://ydc-index.io/v1/search` | `X-API-Key` 头 | `{query, count}` | `results.web[]`（**results 是对象不是数组**）；摘要 `description` → `snippets[0]` 兜底 |
+| `linkup` | POST | `https://api.linkup.so/v1/search` | `Authorization: Bearer` | `{q, depth:'fast', outputType:'searchResults', maxResults}` | `results[]`（标题字段 `name`、摘要字段 `content`） |
+| `firecrawl` | POST | `https://api.firecrawl.dev/v2/search` | `Authorization: Bearer` | `{query, limit}` | `data.web[]`（摘要字段 `description`） |
+| `kimi` | POST | `https://api.moonshot.cn/v1/tools/search` | `Authorization: Bearer` | `{text_query, limit, include_content:true}` | `search_results[]`（标题/链接/摘要 `title`/`url`/`snippet`） |
+
+perplexity 用的是检索接口 `/search`，不是 `chat/completions`：Sonar Chat Completions 已于 2026-09-27 停止支持。
+
+本包现聚合 **14 家**提供商（原 9 家 + mojeek / youcom / linkup / firecrawl / kimi）：mojeek 是独立欧洲索引，youcom 带 Web + News 双源，linkup 是 agentic search，firecrawl 覆盖 research/pdf/developer/gov 垂类，kimi 国内直连。新增 5 家的端点/字段来自官方文档样例级检索（抓取 2026-11-20），**未经真实密钥 live 验证**，官方改版后需同步。
+
+## 配置
+
+配置节 `worlds.web-search-multi`：
+
+```
+{
+  "enabled": true,
+  "providers": { "anysearch": true, "tavily": true, "exa": false, "...": true },
+  "maxResults": 5
+}
+```
+
+- `enabled`、`maxResults` 在配置面板里可改。
+- `providers` 是逐家开关，缺键视为打开。
+
+## 选哪家引擎：`provider` 参数
+
+`web_search_multi` 接受可选的 `provider` 参数（enum 为 14 家 id，与 `SearchProvider` / `PROVIDER_ADAPTERS` / `PROVIDER_SECRET` 同源）：
+
+- 不填：并行调用所有「开关打开 且（无需密钥或已配密钥）」的引擎，按 url 去重后截断（默认行为）。
+- 填一家 id：只调用那一家。
+- 填的 id 未知 / 那家开关关闭 / 那家缺密钥：返回 `failed: true` 的明确错误，区分三种原因；**不会静默降级到全部，也不会忽略开关强制调用**。
+
 ## 各提供商价格与约束（官方量级参考，随官方变动）
 
-| 提供商 | 价格 | 定位 | 优势 | 硬约束 |
-| --- | --- | --- | --- | --- |
-| Anysearch | 免费 1000 次/天 | API + MCP + Skill，个人项目与原型首选 | 免费额度大，多协议可用 | 匿名访问受较低限速，建议配 API key |
-| Tavily | $8/千次（1000 credits/月免费） | Agent 默认项，含 extract/crawl/map | 2026 年并入 Nebius，Agent 原生 | 密钥必填，无匿名访问 |
-| Exa | $7/千次（快速模式 $4） | 向量语义检索，擅长探索式查询 | 索引新，适合“找不到关键词”的场景 | 密钥必填，以 x-api-key 头传递 |
-| Bocha | 约 ¥20/千次 | 中文场景综合最强，自带 reranker | 0.15s 延迟，支持 MCP，中文覆盖广 | 密钥必填，中文搜索为主 |
-| 阿里 IQS | 约 ¥12/千次 Lite，Standard ¥30–42，Deep ¥50 | 有 OpenAI 兼容格式的国内主力 | 阿里云联网搜索，国内访问稳定 | 密钥必填，付费后付费 |
-| 腾讯云 | 约 ¥18–22/千次轻量版后付费 | 腾讯云联网搜索轻量版 | 国内主流引擎，后付费计费 | 密钥必填，需腾讯云账号 |
-| 智谱 | 含在 token 费用内 | Tool Calling + MCP，聚合 5 家引擎 | 聚合多引擎，调用简单 | 密钥必填，随模型账单计费 |
-| Perplexity | $5/千次 | 原始结果，索引新、覆盖广 | 答案带引用，适合深度研究 | 密钥必填，Sonar 异步接口已停止支持 |
-| Serper | $0.3–1/千次 | 最便宜的 Google SERP，无正文提取 | 价格最低，适合排名追踪 | 密钥必填，不含正文，合规风险自评 |
-| Brave | $5/月免费额度 | 自有索引约 300 亿页，不依赖 Google/Bing | 自建索引，避免单一供应商 | 密钥必填，免费额度有限 |
+| 提供商 | 价格 | 定位 | 硬约束 |
+| --- | --- | --- | --- |
+| Anysearch | 免费 1000 次/天 | API + MCP + Skill，个人项目与原型首选 | 匿名访问受较低限速，建议配 API key |
+| Tavily | $8/千次（1000 credits/月免费） | Agent 默认项，含 extract/crawl/map | 密钥必填 |
+| Exa | $7/千次（快速模式 $4） | 向量语义检索，擅长探索式查询 | 密钥必填，以 x-api-key 头传递 |
+| Bocha | 约 ¥20/千次 | 中文场景综合最强，自带 reranker | 密钥必填，中文搜索为主 |
+| 阿里 IQS | 约 ¥12/千次 Lite，Standard ¥30–42，Deep ¥50 | 国内主力，阿里云联网搜索 | 密钥必填，后付费 |
+| 智谱 | 含在 token 费用内 | Tool Calling + MCP，聚合 5 家引擎 | 密钥必填，随模型账单计费 |
+| Perplexity | $5/千次 | 原始结果，索引新、覆盖广 | 密钥必填，摘要可能为空 |
+| Serper | $0.3–1/千次 | 最便宜的 Google SERP，无正文提取 | 密钥必填，合规风险自评 |
+| Brave | $5/月免费额度 | 自有索引约 300 亿页，不依赖 Google/Bing | 密钥必填，免费额度有限 |
+| Mojeek | 按套餐，有免费额度 | 独立欧洲索引，非 Google/Bing 系补充源 | 密钥必填，GET + query string 传 api_key |
+| You.com (YDC) | 按套餐 | Web + News 双源，YDC 索引 | 密钥必填（键名 `YDC_API_KEY`），results 为对象 |
+| Linkup | 按套餐/按量 | agentic search，适合推理式检索 | 密钥必填，需传 depth/outputType |
+| Firecrawl | 按量 | 垂类索引（research/pdf/developer/gov） | 密钥必填，v2 端点 |
+| Kimi (Moonshot) | 按量 | 国内直连，Moonshot 工具搜索 | 密钥必填（键名 `MOONSHOT_API_KEY`），查询字段 `text_query` |
+
+新增 5 家的价格仅作定性参考（[未核验]，随官方变动），以官网为准。
 
 ## 硬约束
 
 - Bing Search API 已关停，替代品 Grounding with Bing 只返回模型答案，不给原始结果。
 - Google Custom Search JSON API 已停止接受新客户，存量客户 2027-01-01 过渡截止。
 - SERP 抓取类存在法律尾部风险（如 SerpApi、Reddit 相关诉讼，未结案），合规风险自评。
-- 只用一个供应商是架构缺陷：保留第二套备用检索方案，并编写降级逻辑。本插件已对各提供商并行调用并按 url 去重，任一失败自动跳过。
-
-## 如何安装 cortico SDK
-
-本插件不 vendored Cortico SDK（`vendor/cortico` 为空 submodule）。按模板规范编写，`tsconfig.json` 中 `cortico/*` 映射到 `../../vendor/cortico/src`，待宿主或 submodule 提供 SDK 后可直接编译运行：
-
-```
-git submodule update --init vendor/cortico
-```
-
-或按宿主指南安装 Cortico SDK。
+- 只用一个供应商是架构缺陷：本插件已对各提供商并行调用并按 url 去重，单家失败只跳过该家。
 
 ## 如何运行
 
-在包目录下：
+SDK 来自 `cortico` devDependency（`^0.2.16`），不需要 vendor submodule。在包目录下：
 
 ```
 pnpm install
-pnpm test        # vitest run
 pnpm typecheck   # tsc --noEmit
+pnpm test        # vitest run：干装载 + fetch stub，不联网、不启宿主
+```
+
+在 Cortico 检出根验证装载：
+
+```
+pnpm describe:extension <本包目录>   # 生成 describe.json（不要手改）
+pnpm check:extension <本包目录>      # 应打 Extension check passed.
 ```
 
 ## 限制
 
-Web 的 REST 端点按文档推断，若 Anysearch / Tavily / Exa / Bocha / 阿里 IQS / 腾讯云 / 智谱 / Perplexity / Serper / Brave 官方 REST 规范有变更，以官方为准。本插件按并行调用、按 url 去重、截断到 max_results 聚合，不保证特定提供商始终可用。
+- 各家的 REST 端点是按官方文档实现的，官方改版后需同步；单测用的是 fixture，**没有实机打过**。
+- 验证到「构建 + 干装载」两级；真搜出结果属行为级，只能在真宿主里目击。
+- 回执只给结果，不带各家的价格与约束（那些是配置期信息，不进模型上下文）。

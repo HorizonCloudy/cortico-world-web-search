@@ -1,53 +1,35 @@
 import type { WorldDefinition } from 'cortico/world.ts';
 import { describeTools } from 'cortico/world.ts';
 import type { WebSearchConfigSection } from './config.ts';
-import { WEB_SEARCH_CONFIG_GROUP, WEB_SEARCH_DEFAULTS } from './config.ts';
-import { WebSearchWorld } from './world.ts';
+import { WEB_SEARCH_DEFAULTS, WEB_SEARCH_ID } from './config.ts';
+import { WEB_SEARCH_TOOL_DECLS, WebSearchWorld } from './world.ts';
 
-/** 工具声明，与 describe.json 的 web_search 一致（handler 在 world.tools() 中绑定）。 */
-const TOOL_DECLS = [
-  {
-    name: 'web_search',
-    description: '按关键词在网上搜索，返回标题、网址和简介；可用 max_results 限制返回条数，最多 10 条。',
-    parameters: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        query: { type: 'string', description: 'The search query.' },
-        max_results: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 10,
-          default: 5,
-          description: 'Maximum number of results to return.',
-        },
-      },
-      required: ['query'],
-    },
-    tags: ['read'],
-  },
-];
-
-/** `web-search` World 的定义。 */
+/**
+ * `web-search-multi` World 的定义。
+ *
+ * id 不能是 `web-search`：官方包 `cortico-world-websearch@0.2.17` 已发布，
+ * 首次发布前就用不近名的值；工具名同理不能是内建的 `web_search`。
+ */
 export const WebSearch: WorldDefinition<WebSearchConfigSection> = {
-  id: 'web-search',
-  label: 'web-search',
+  id: WEB_SEARCH_ID,
+  label: WEB_SEARCH_ID,
   defaults: () => structuredClone(WEB_SEARCH_DEFAULTS),
   create: (ctx) => new WebSearchWorld({
     cfg: ctx.cfg,
     timezone: ctx.timezone,
     getApiKey: (name: string) => ctx.secret(name),
+    botDir: ctx.botDir,
   }),
   describe: {
-    tools: describeTools(TOOL_DECLS, {
-      web_search: {
-        zh: '按关键词在网上搜索，返回标题、网址和简介；可用 max_results 限制返回条数，最多 10 条。',
-        en: 'Search the web by keyword and return titles, URLs and snippets. Limit results with max_results, at most 10.',
+    tools: describeTools(WEB_SEARCH_TOOL_DECLS, {
+      web_search_multi: {
+        zh: '在多个搜索提供商上并行搜索，返回去重后的标题、网址和简介；可用 max_results 限制返回条数，最多 10 条。',
+        en: 'Search several providers in parallel and return deduplicated titles, URLs and snippets. Limit results with max_results, at most 10.',
       },
     }),
     events: [
       {
-        type: 'web-search.started',
+        type: `${WEB_SEARCH_ID}.started`,
         description: {
           zh: '世界已挂载。',
           en: 'The world was mounted.',
@@ -56,6 +38,3 @@ export const WebSearch: WorldDefinition<WebSearchConfigSection> = {
     ],
   },
 };
-
-export { WebSearch };
-export type { WebSearchConfigSection };

@@ -1,27 +1,34 @@
 {
-  "name": "cortico-world-web-search",
+  "name": "cortico-world-web-search-multi",
   "version": "0.1.0",
   "type": "module",
-  "description": "Cortico World: 网络搜索，基于 Anysearch / Tavily / Exa 聚合的 web_search 工具",
+  "description": "Cortico World: 多 provider 聚合搜索（Anysearch / Tavily / Exa / Bocha / 阿里 IQS / 智谱 / Perplexity / Serper / Brave），跨源去重，暴露 web_search_multi 工具",
   "license": "MIT",
   "keywords": [
     "cortico-world",
     "cortico",
-    "web-search"
+    "web-search",
+    "search",
+    "meta-search"
   ],
   "engines": {
     "node": ">=22"
   },
-  "packageManager": "pnpm@11.28.62",
+  "packageManager": "pnpm@11.28.6",
   "main": "./src/index.ts",
   "cortico": {
     "kind": "world",
     "api": 6,
-    "describe": "describe.json"
+    "describe": "describe.json",
+    "tags": [
+      "internet",
+      "requires-key"
+    ]
   },
   "files": [
     "src",
     "README.md",
+    "CHANGELOG.md",
     "describe.json"
   ],
   "scripts": {
@@ -34,5 +41,14 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HorizonCloudy/cortico-world-web-search.git"
+  },
+  "homepage": "https://github.com/HorizonCloudy/cortico-world-web-search#readme",
+  "bugs": {
+    "url": "https://github.com/HorizonCloudy/cortico-world-web-search/issues"
+  },
+  "author": "HorizonCloudy"
 }
