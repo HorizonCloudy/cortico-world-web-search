@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- **环境提示词三项变量化**：`src/ENV_PROMPT.md` 里「可用引擎范围」「已启用引擎的搜索方案（调用顺序/组合方式/结果汇总/失败回退）」「搜索模式」改为模板变量 `{{web_search_multi.availableProviders}}` / `{{web_search_multi.searchPlan}}` / `{{web_search_multi.searchMode}}`，由 `envPromptVars()` 按当前配置现算。可用范围按面板开关 + 实际密钥判定，不再是与配置脱钩的静态列表。
+- **新增 `worlds.web-search-multi.searchMode`（`multi` | `single`，默认 `multi`）**：`multi` 与旧行为逐字一致；`single` 只调用 `SINGLE_MODE_PRIORITY` 里第一个可用引擎，失败不自动换家，换源需显式 `provider` 或切回 `multi`。旧配置缺该键按 `multi` 处理，无需迁移。
+- **新增 `SINGLE_MODE_PRIORITY`**（14 家全排列，首 `bocha` 末 `anysearch`），与 `SEARCH_PROVIDER_IDS` 互为全排列由测试锁定。
+- **修复既存缺陷**：`describe.json` 内嵌模板用 `\n`、Windows autocrlf 检出把 `src/ENV_PROMPT.md` 转成 `\r\n`，导致 `check:extension` 的自描述检查在任何 autocrlf=true 的机器上恒失败。新增 `.gitattributes`（`* text=auto eol=lf`）钉住检出换行符，并用生成器重新产出 `describe.json`。
+- 工具 description 改为模式中性（「并行或单源取决于聚合模式」），`cortico` manifest、工具名、参数 schema、14 家 adapter 均未改动。
+- `cortico` devDependency 由 `^0.2.16` 提到 `^0.2.17`（与实际安装版本一致）。
+
 ## 0.2.0
 
 - **删除「Anysearch 端点覆盖」**：移除配置面板属性、`WebSearchConfigSection.endpoint` 与 `WEB_SEARCH_DEFAULTS.endpoint`、`envPromptVars()` 的 endpoint 变量与 `ENV_PROMPT.md` 占位符；anysearch 固定走官方端点。不再有端点覆盖旋钮。

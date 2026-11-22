@@ -1,0 +1,4 @@
+# 检出统一 LF：src/ENV_PROMPT.md 会被 describe.json 逐字内嵌，describe 校验用
+# isDeepStrictEqual 比对（cortico/extensions/describe-export.ts:172）；autocrlf=true 的
+# Windows 机器若把模板签出成 CRLF，check:extension 的自描述检查会恒失败。
+* text=auto eol=lf

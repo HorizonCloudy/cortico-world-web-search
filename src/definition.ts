@@ -23,8 +23,8 @@ export const WebSearch: WorldDefinition<WebSearchConfigSection> = {
   describe: {
     tools: describeTools(WEB_SEARCH_TOOL_DECLS, {
       web_search_multi: {
-        zh: '在多个搜索提供商上并行搜索，返回去重后的标题、网址和简介；可用 max_results 限制返回条数，最多 10 条。',
-        en: 'Search several providers in parallel and return deduplicated titles, URLs and snippets. Limit results with max_results, at most 10.',
+        zh: '在已配置的搜索提供商上搜索（并行还是单源取决于聚合模式），返回去重后的标题、网址和简介；可用 max_results 限制返回条数，最多 10 条。',
+        en: 'Search the configured providers (in parallel or from a single source, depending on the aggregation mode) and return deduplicated titles, URLs and snippets. Limit results with max_results, at most 10.',
       },
     }),
     events: [

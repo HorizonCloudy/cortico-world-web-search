@@ -14,7 +14,7 @@ Cortico World 插件：世界 id `web-search-multi`，暴露一个**多 provider
 
 聚合行为：
 
-- 只调用「开关打开 且（不需要密钥 或 密钥已配置）」的提供商，`Promise.all` 并行。
+- **多引擎优先模式（默认）**：只调用「开关打开 且（不需要密钥 或 密钥已配置）」的提供商，`Promise.all` 并行；`single` 模式只调用其中优先级最高的一个。
 - 每家的请求形状与结果路径按各自官方文档解析（见下表），不做「统一 POST + 顶层 results 数组」的猜测。
 - 按 `url` 去重（忽略大小写），再截断到 `maxResults`。
 - **单家失败不影响其他家**：失败只记一条 warn 到运行日志；拿不到 logger 时在回执末尾附一行「n 家提供商调用失败」。
@@ -82,12 +82,14 @@ perplexity 用的是检索接口 `/search`，不是 `chat/completions`：Sonar C
 {
   "enabled": true,
   "providers": { "anysearch": true, "tavily": true, "exa": false, "...": true },
-  "maxResults": 5
+  "maxResults": 5,
+  "searchMode": "multi"
 }
 ```
 
-- `enabled`、`maxResults` 在配置面板里可改。
+- `enabled`、`maxResults`、`searchMode` 在配置面板里可改。
 - `providers` 是逐家开关，缺键视为打开。
+- `searchMode` 缺键视为 `multi`（旧配置不需要迁移）。
 
 ## 选哪家引擎：`provider` 参数
 
@@ -96,6 +98,26 @@ perplexity 用的是检索接口 `/search`，不是 `chat/completions`：Sonar C
 - 不填：并行调用所有「开关打开 且（无需密钥或已配密钥）」的引擎，按 url 去重后截断（默认行为）。
 - 填一家 id：只调用那一家。
 - 填的 id 未知 / 那家开关关闭 / 那家缺密钥：返回 `failed: true` 的明确错误，区分三种原因；**不会静默降级到全部，也不会忽略开关强制调用**。
+
+## 搜索模式与引擎优先级
+
+`searchMode` 决定「不指定 `provider` 时怎么搜」，两种模式都把结果按 `url` 去重（忽略大小写）后截断到 `maxResults`：
+
+| 模式 | 调用顺序 | 组合与汇总 | 失败回退 | 适用 |
+| --- | --- | --- | --- | --- |
+| `multi`（多引擎优先，默认） | 并发，无先后 | 全部可用引擎各发一次；按内置 adapter 表顺序拼接、跨源去重 | 单家失败只跳过该家，回执末尾列失败家；全部失败或无命中报「未找到结果」 | 交叉验证、抗单家限流 |
+| `single`（单引擎优先） | 串行，只调一家 | 只取优先级最高的一个可用引擎；单源、不跨源合并 | **不自动换家**：该家失败或无命中就明确报原因，换源请显式传 `provider` 或切回 `multi` | 省钱、降延迟、要单源可追溯 |
+
+单引擎优先的选取顺序（也是提示词里「可用引擎范围」的展示顺序）：
+
+```
+bocha → tavily → brave → exa → ali → zhipu → serper
+      → mojeek → youcom → linkup → firecrawl → kimi → perplexity → anysearch
+```
+
+排序理由：中文场景（bocha）与 Agent 原生通用（tavily）优先，自有索引（brave）次之，垂直与国内补充源居中，匿名限速的 anysearch 垫底。`SINGLE_MODE_PRIORITY` 必须与 `SEARCH_PROVIDER_IDS` 互为全排列，加第 15 家时测试会红，提醒你把它排进顺序。
+
+`provider` 参数在两种模式下都优先于模式：显式指定就用那一家，未知 id / 开关关闭 / 缺密钥照旧明确报错。
 
 ## 各提供商价格与约束（官方量级参考，随官方变动）
 
@@ -127,7 +149,7 @@ perplexity 用的是检索接口 `/search`，不是 `chat/completions`：Sonar C
 
 ## 如何运行
 
-SDK 来自 `cortico` devDependency（`^0.2.16`），不需要 vendor submodule。在包目录下：
+SDK 来自 `cortico` devDependency（`^0.2.17`），不需要 vendor submodule。在包目录下：
 
 ```
 pnpm install
@@ -141,6 +163,8 @@ pnpm test        # vitest run：干装载 + fetch stub，不联网、不启宿�
 pnpm describe:extension <本包目录>   # 生成 describe.json（不要手改）
 pnpm check:extension <本包目录>      # 应打 Extension check passed.
 ```
+
+本包不内置 `describe:extension` / `check:extension` 脚本（它们在 Cortico 检出根）；`describe.json` 必须由生成器产出，不要手改。本机无检出时可用 `cortico/extensions/describe-export.ts` 的 `exportDescribe()` / `checkDescribe()` 直接跑同一套生成与校验逻辑。
 
 ## 限制
 

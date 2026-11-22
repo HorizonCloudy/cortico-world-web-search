@@ -49,6 +49,40 @@ export const PROVIDER_SECRET: Record<SearchProvider, string> = {
  */
 export const SEARCH_PROVIDER_IDS = Object.keys(PROVIDER_SECRET) as SearchProvider[];
 
+/**
+ * 无需密钥也能调用的提供商（匿名限速）。与 `PROVIDER_ADAPTERS` 的 `requiresKey: false` 同义，
+ * 放在这里是为了让 `prompt-vars.ts` 只依赖本文件、不反向 import `world.ts`（会成环）。
+ */
+export const ANONYMOUS_PROVIDERS: ReadonlySet<SearchProvider> = new Set<SearchProvider>(['anysearch']);
+
+/** 每家的定位短句，给提示词「可用引擎范围」用；状态（已配密钥/匿名可用）由渲染时现算。 */
+export const PROVIDER_NOTE: Record<SearchProvider, string> = {
+  anysearch: '限速较低，配密钥后额度更大',
+  tavily: 'Agent 原生，稳定',
+  exa: '向量语义检索',
+  bocha: '中文覆盖广、延迟低',
+  ali: '国内访问稳定',
+  zhipu: '聚合引擎，随模型计费',
+  perplexity: '索引新，摘要可能为空',
+  serper: '最便宜的 Google SERP',
+  brave: '自有索引，不依赖 Google/Bing',
+  mojeek: '独立欧洲索引',
+  youcom: 'Web + News 双源',
+  linkup: 'agentic 检索',
+  firecrawl: '垂类索引（research/pdf 等）',
+  kimi: '国内直连',
+};
+
+/**
+ * 聚合模式：
+ * - `multi`：并发调用全部可用引擎，跨源按 url 去重（默认，与旧行为逐字一致）。
+ * - `single`：只调用优先级最高的一家，失败不自动换家。
+ */
+export type SearchMode = 'multi' | 'single';
+
+/** 面板 enum 的单一来源。 */
+export const SEARCH_MODES: readonly SearchMode[] = ['multi', 'single'];
+
 /** 各提供商是否参与聚合；缺失密钥的提供商在运行时自动跳过。 */
 export interface ProviderSwitches {
   anysearch: boolean;
@@ -75,9 +109,14 @@ export interface WebSearchConfigSection extends WorldSection {
   providers: ProviderSwitches;
   /** 一次搜索最多返回的结果条数。 */
   maxResults: number;
+  /**
+   * 聚合模式。旧配置文件没有这个键，装配层用 `defaults()` 深合并补齐（`deploy.ts:150-156`），
+   * 读取处仍用 `resolveSearchMode()` 归一，未知值回落 `multi`。
+   */
+  searchMode: SearchMode;
 }
 
-/** `worlds.web-search-multi` 的缺省值：全部提供商开启，最多返回 5 条。 */
+/** `worlds.web-search-multi` 的缺省值：全部提供商开启，最多返回 5 条，多引擎优先。 */
 export const WEB_SEARCH_DEFAULTS: WebSearchConfigSection = {
   enabled: false,
   providers: {
@@ -86,6 +125,7 @@ export const WEB_SEARCH_DEFAULTS: WebSearchConfigSection = {
     mojeek: true, youcom: true, linkup: true, firecrawl: true, kimi: true,
   },
   maxResults: 5,
+  searchMode: 'multi',
 };
 
 const K = `worlds.${WEB_SEARCH_ID}`;
@@ -102,6 +142,12 @@ export const WEB_SEARCH_CONFIG_GROUP: ConfigGroup = {
         type: 'boolean',
         title: '启用',
         description: `是否启用 ${WEB_SEARCH_ID} 多源聚合搜索世界。`,
+      },
+      [`${K}.searchMode`]: {
+        type: 'string',
+        title: '搜索模式',
+        enum: [...SEARCH_MODES],
+        description: 'multi：并发全部可用引擎、按 url 去重（默认）；single：只调用优先级最高的一家，失败不自动换家。改完重载前缀后提示词里的方案段才刷新。',
       },
       ...Object.fromEntries((Object.keys(WEB_SEARCH_DEFAULTS.providers) as SearchProvider[]).map((p) => [
         `${K}.providers.${p}`,

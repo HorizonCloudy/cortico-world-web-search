@@ -1,6 +1,7 @@
 /**
- * 多 provider 聚合搜索 World：每家一个独立 adapter（各自的鉴权、端点、请求形状、结果路径），
- * 并行调用、按 url 去重、截断到 maxResults。单家失败只记一条 warn，不影响其他家。
+ * 多 provider 聚合搜索 World：每家一个独立 adapter（各自的鉴权、端点、请求形状、结果路径）。
+ * 默认 `multi` 模式并行调用、按 url 去重、截断到 maxResults，单家失败只记一条 warn；
+ * `single` 模式只调 `SINGLE_MODE_PRIORITY` 里第一个可用的一家，失败不自动换家。
  * 回执只给结果；价格与硬约束留在 ENV_PROMPT.md 与配置面板，不进模型上下文。
  */
 import type { ToolCallContext, ToolDef, ToolOutcome, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
@@ -14,12 +15,20 @@ import {
   WEB_SEARCH_ID,
 } from './config.ts';
 import type { ProviderSwitches, SearchProvider, WebSearchConfigSection } from './config.ts';
+import {
+  AVAILABLE_VAR,
+  ENV_FILE_VAR,
+  MODE_VAR,
+  PLAN_VAR,
+  PROMPT_VARS_FALLBACK,
+  SINGLE_MODE_PRIORITY,
+  buildPromptVars,
+  resolveSearchMode,
+  usableProviders,
+} from './prompt-vars.ts';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
 const ENV_PROMPT_KEY = `worlds.${WEB_SEARCH_ID}.envPrompt`;
-// 模板占位符正则只认 [\w.]，不支持连字符；world id 含连字符，故变量名用下划线。
-const VAR_PREFIX = WEB_SEARCH_ID.replace(/-/g, '_');
-const ENV_FILE_VAR = `${VAR_PREFIX}.envFile`;
 const ANYSEARCH_ENDPOINT = 'https://api.anysearch.com/v1/search';
 
 /**
@@ -31,7 +40,7 @@ const ANYSEARCH_ENDPOINT = 'https://api.anysearch.com/v1/search';
 export const WEB_SEARCH_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   {
     name: 'web_search_multi',
-    description: '按关键词在多个搜索提供商上并行搜索，返回去重后的标题、网址和简介；可用 max_results 限制返回条数，最多 10 条。',
+    description: '按关键词在已配置的搜索提供商上搜索（并行还是单源取决于聚合模式），返回去重后的标题、网址和简介；可用 max_results 限制返回条数，最多 10 条。',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -40,7 +49,7 @@ export const WEB_SEARCH_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
         provider: {
           type: 'string',
           enum: [...SEARCH_PROVIDER_IDS],
-          description: '不填则并行调用所有已开启且已配密钥的引擎；填则只用这一家。',
+          description: '不填则按聚合模式调用已开启且已配密钥的引擎；填则只用这一家，优先于聚合模式。',
         },
         max_results: {
           type: 'integer',
@@ -403,9 +412,32 @@ export class WebSearchWorld implements World {
 
   constructor(private readonly opts: WebSearchWorldOptions) {}
 
+  /** 按环境变量名取密钥；空白视为未配置。 */
+  private keyOf(name: string): string | undefined {
+    const value = this.opts.getApiKey(name);
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    return trimmed || undefined;
+  }
+
+  /** 部署 .env 的准确路径；拿不到 botDir 时给一句人话，不让占位符留空。 */
+  private envFilePath(): string {
+    return this.opts.botDir ? `${this.opts.botDir.replace(/[\\/]+$/, '')}/.env` : '(未取到部署目录)';
+  }
+
+  /**
+   * 四个变量恒齐全：三个由 `buildPromptVars()` 现算，`envFile` 本地拼。
+   * 任何异常都落 `PROMPT_VARS_FALLBACK`——只返回 `envFile` 会让另外三个 `{{...}}`
+   * 原样泄进系统提示词（`core/template.ts:27` 对未赋值的占位符原样保留）。
+   */
   envPromptVars(): Record<string, string> {
-    const envFile = this.opts.botDir ? `${this.opts.botDir.replace(/[\\/]+$/, '')}/.env` : '(未取到部署目录)';
-    return { [ENV_FILE_VAR]: envFile };
+    try {
+      return {
+        [ENV_FILE_VAR]: this.envFilePath(),
+        ...buildPromptVars(this.opts.cfg, (name) => this.keyOf(name)),
+      };
+    } catch {
+      return { [ENV_FILE_VAR]: this.envFilePath(), ...PROMPT_VARS_FALLBACK };
+    }
   }
 
   tools(): ToolDef[] {
@@ -424,8 +456,12 @@ export class WebSearchWorld implements World {
           description: '在哪些情况下调用 web_search_multi，如何引用搜索结果，不要滥用搜索。',
           path: ENV_PROMPT_FILE,
           role: 'envPrompt',
+          // 声明只喂 WebUI 的变量面板，不参与渲染；防泄漏靠 envPromptVars() 恒返回四键。
           vars: [
             { name: ENV_FILE_VAR, description: '密钥文件 .env 的准确路径，用于回答用户「密钥填哪里」。' },
+            { name: AVAILABLE_VAR, description: '按面板开关与实际密钥现算的可用引擎清单，顺序即单引擎优先模式的选取顺序。' },
+            { name: PLAN_VAR, description: '当前聚合模式下的调用顺序、组合方式、结果汇总与失败回退，多行。', multiline: true },
+            { name: MODE_VAR, description: '当前聚合模式：多引擎优先（multi）或单引擎优先（single）。' },
           ],
         },
       ],
@@ -457,14 +493,13 @@ export class WebSearchWorld implements World {
 
     const cfg = this.opts.cfg;
     const switches: ProviderSwitches = cfg.providers ?? WEB_SEARCH_DEFAULTS.providers;
-    const keyOf = (name: string): string | undefined => {
-      const value = this.opts.getApiKey(name);
-      const trimmed = typeof value === 'string' ? value.trim() : '';
-      return trimmed || undefined;
-    };
+    // 模式在 handler 里现读：改配置立即生效（提示词那段要等前缀重载才刷新）。
+    const mode = resolveSearchMode(cfg);
+    const keyOf = (name: string): string | undefined => this.keyOf(name);
 
     // 显式指定单家：严格三分支，未知 id / 开关关闭 / 缺密钥都明确失败，禁止静默降级到全部。
-    // 未指定：维持原行为——所有「开关打开 且（无需密钥或已配密钥）」的家并行。
+    // 未指定：multi 维持原行为（所有「开关打开 且（无需密钥或已配密钥）」的家并行）；
+    // single 只取 SINGLE_MODE_PRIORITY 里第一个可用的一家，失败不自动换家。
     const requested = typeof args.provider === 'string' && args.provider.trim()
       ? args.provider.trim()
       : undefined;
@@ -493,6 +528,20 @@ export class WebSearchWorld implements World {
         };
       }
       usable.push({ adapter, key });
+    } else if (mode === 'single') {
+      // 与提示词同源：usableProviders() 已是「开关没关 且（无需密钥或已配密钥）」，
+      // 顺序按 SINGLE_MODE_PRIORITY，取第一个即可。
+      const first = usableProviders(cfg, keyOf)[0];
+      const adapter = first ? PROVIDER_ADAPTERS.find((a) => a.id === first.id) : undefined;
+      if (first && adapter) usable.push({ adapter, key: keyOf(adapter.secretName) });
+      // 无可用家时补准确的密钥指引；选家口径仍完全由 usableProviders() 决定。
+      if (!usable.length) {
+        for (const id of SINGLE_MODE_PRIORITY) {
+          if (switches[id] === false) continue;
+          const secretName = PROVIDER_SECRET[id];
+          if (!keyOf(secretName)) missingKeys.push(secretName);
+        }
+      }
     } else {
       for (const adapter of PROVIDER_ADAPTERS) {
         if (switches[adapter.id] === false) continue;

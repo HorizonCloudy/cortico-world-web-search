@@ -10,7 +10,8 @@
  *   （或兜底改用 `||`），请求必须打到 https://api.anysearch.com/v1/search。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { renderTemplate } from 'cortico/core/template.ts';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -352,3 +353,235 @@ describe('requirement A regression (endpoint override fully removed)', () => {
     expect(vars.some((v) => v.name.includes('endpoint'))).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 环境提示词三变量化 + 搜索模式（implementation-brief §E：T1–T16）
+//
+// 全组只做纯函数级验证：读模板原文、调 envPromptVars()、stub fetch。
+// 不联网、不启宿主、不 mock fs、不 monkeypatch 生产模块内部函数。
+// 断言一律用 implementation-brief §C 的稳定子串（T16 例外：那条要逐字相等）。
+// 尚未存在的模块（src/prompt-vars.ts）用动态 import，避免整文件收集失败把已有 25 条拖红。
+// ---------------------------------------------------------------------------
+
+/** §C 锁定的四个变量名（逐字）；连字符不合法，故 world id 的 `-` 写成 `_`。 */
+const VAR_AVAILABLE = 'web_search_multi.availableProviders';
+const VAR_PLAN = 'web_search_multi.searchPlan';
+const VAR_MODE = 'web_search_multi.searchMode';
+const VAR_ENV_FILE = 'web_search_multi.envFile';
+
+/** 读 `src/ENV_PROMPT.md` 原文（T1 / T2 / T16 共用）。 */
+function envPromptText(): string {
+  return readFileSync(join(packageDir, 'src', 'ENV_PROMPT.md'), 'utf8');
+}
+
+/** 调一次 envPromptVars()；缺键以 '' 参与断言，失败信息更直白（不是 TypeError）。 */
+async function envVarsOf(ctx = newCtx()): Promise<Record<string, string>> {
+  const vars = (await WebSearch.create(ctx).envPromptVars()) ?? {};
+  return vars as Record<string, string>;
+}
+
+/** 14 家全配假密钥的 ctx：可用集合 = 全部 14 家。 */
+function everyProviderKeyed() {
+  return newCtx({ secret: () => 'fake-key' });
+}
+
+/** 把配置面板上 14 家开关全部关掉（anysearch 也关，才能到 N=0）。 */
+function switchOffAll(ctx: ReturnType<typeof newCtx>) {
+  const cfg = ctx.cfg as WebSearchConfigSection;
+  for (const id of SEARCH_PROVIDER_IDS) cfg.providers[id] = false;
+  return ctx;
+}
+
+/** 改 searchMode；用 string 形参，好覆盖非法值 'bogus'。 */
+function setSearchMode(ctx: ReturnType<typeof newCtx>, mode: string) {
+  (ctx.cfg as unknown as { searchMode: string }).searchMode = mode;
+  return ctx;
+}
+
+describe('env prompt vars（T1–T8）', () => {
+  it('T1: 模板显式引用三个新变量，envFile 仍保留', () => {
+    const md = envPromptText();
+    expect(md).toContain(`{{${VAR_AVAILABLE}}}`);
+    expect(md).toContain(`{{${VAR_PLAN}}}`);
+    expect(md).toContain(`{{${VAR_MODE}}}`);
+    expect(md).toContain(`{{${VAR_ENV_FILE}}}`);
+  });
+
+  it('T2: 用平台 renderTemplate 真渲染后无残留 {{，且四个变量值都落进正文', async () => {
+    const vars = await envVarsOf(everyProviderKeyed());
+    const rendered = renderTemplate(envPromptText(), vars);
+    expect(rendered).not.toContain('{{');
+    for (const key of [VAR_ENV_FILE, VAR_AVAILABLE, VAR_PLAN, VAR_MODE]) {
+      const value = vars[key];
+      expect(typeof value, `${key} 未返回字符串`).toBe('string');
+      expect(value.trim().length, `${key} 为空串`).toBeGreaterThan(0);
+      expect(rendered).toContain(value);
+    }
+  });
+
+  it('T3: envPromptVars() 恰好四个键，值均非空（防占位符原样泄漏）', async () => {
+    const vars = await envVarsOf(everyProviderKeyed());
+    expect(Object.keys(vars).sort()).toEqual([VAR_AVAILABLE, VAR_ENV_FILE, VAR_MODE, VAR_PLAN].sort());
+    for (const [key, value] of Object.entries(vars)) {
+      expect(typeof value, `${key} 应返回字符串`).toBe('string');
+      expect(value.trim().length, `${key} 不能为空串`).toBeGreaterThan(0);
+    }
+  });
+
+  it('T3b (契约 B1): PROMPT_VARS_FALLBACK 三键非空、键名与变量名逐字一致', async () => {
+    // §A B1 的落地写法是 `{ [ENV_FILE_VAR]: envFile, ...PROMPT_VARS_FALLBACK }`，
+    // 展开进同一个对象 ⇒ 键必须是带 web_search_multi. 前缀的完整变量名。
+    const mod = (await import('../src/prompt-vars.ts')) as unknown as Record<string, unknown>;
+    const fallback = mod.PROMPT_VARS_FALLBACK as Record<string, string> | undefined;
+    expect(fallback, 'src/prompt-vars.ts 应导出 PROMPT_VARS_FALLBACK').toBeDefined();
+    expect(Object.keys(fallback!).sort()).toEqual([VAR_AVAILABLE, VAR_MODE, VAR_PLAN].sort());
+    for (const [key, value] of Object.entries(fallback!)) {
+      expect(typeof value, `${key} 应返回字符串`).toBe('string');
+      expect(value.trim().length, `${key} 不能为空串`).toBeGreaterThan(0);
+    }
+    expect(fallback![VAR_MODE]).toBe('多引擎优先（multi）');
+  });
+
+  it('T4: 默认配置（无任何密钥）只列 anysearch', async () => {
+    const vars = await envVarsOf();
+    const available = vars[VAR_AVAILABLE] ?? '';
+    expect(available).toContain('共 1 家可调用');
+    expect(available).toContain('- anysearch（匿名可用）');
+    expect(available).not.toContain('- tavily');
+  });
+
+  it('T5: 可用范围随开关与密钥变化（14 家 → 关 kimi + 去 TAVILY 密钥）', async () => {
+    const allKeys = await envVarsOf(everyProviderKeyed());
+    expect(allKeys[VAR_AVAILABLE] ?? '').toContain('共 14 家可调用');
+
+    const narrowed = newCtx({ secret: (name) => (name === 'TAVILY_API_KEY' ? '' : 'fake-key') });
+    (narrowed.cfg as WebSearchConfigSection).providers.kimi = false;
+    const available = (await envVarsOf(narrowed))[VAR_AVAILABLE] ?? '';
+    expect(available).not.toContain('- kimi');
+    expect(available).not.toContain('- tavily');
+    expect(available).toContain('- bocha（已配密钥）');
+    expect(available).toContain('共 12 家可调用');
+  });
+
+  it('T6: 零可用引擎时两段都给可操作兜底文案', async () => {
+    const vars = await envVarsOf(switchOffAll(everyProviderKeyed()));
+    expect(vars[VAR_AVAILABLE] ?? '').toContain('当前没有可调用引擎');
+    expect(vars[VAR_PLAN] ?? '').toContain('任何调用都会直接报错');
+  });
+
+  it('T7: 模式渲染（默认 multi / single / 非法值回落 multi）', async () => {
+    expect((await envVarsOf())[VAR_MODE] ?? '').toContain('多引擎优先（multi）');
+    expect((await envVarsOf(setSearchMode(everyProviderKeyed(), 'single')))[VAR_MODE] ?? '').toBe('单引擎优先（single）');
+    // 旧配置文件可能写入未知值：兼容口径是回落 multi，不是报错。
+    expect((await envVarsOf(setSearchMode(everyProviderKeyed(), 'bogus')))[VAR_MODE] ?? '').toContain('多引擎优先（multi）');
+  });
+
+  it('T8: 两模式 searchPlan 文案差异（并发去重 vs 串行不换家）', async () => {
+    const multi = (await envVarsOf(everyProviderKeyed()))[VAR_PLAN] ?? '';
+    expect(multi).toContain('并发，无先后');
+    expect(multi).toContain('按 url 去重');
+
+    const single = (await envVarsOf(setSearchMode(everyProviderKeyed(), 'single')))[VAR_PLAN] ?? '';
+    expect(single).toContain('串行，只调用一家');
+    expect(single).toContain('当前选中 bocha');
+    expect(single).toContain('不自动换家');
+  });
+});
+
+describe('搜索模式运行时行为（T9–T13）', () => {
+  it('T9: 默认 multi 不变——不传 provider、不传 max_results 时 14 家各发一次且默认 5 条', async () => {
+    const calls = stubFetch({ results: [] });
+    const world = WebSearch.create(everyProviderKeyed());
+    await world.tools()[0].handler({ query: 'probe' }, TOOL_CTX);
+    expect(calls).toHaveLength(SEARCH_PROVIDER_IDS.length);
+    expect(calledProviderIds(calls).sort()).toEqual([...SEARCH_PROVIDER_IDS].sort());
+    // anysearch 是 adapter 表首家：请求体里的条数就是默认 maxResults=5。
+    const first = JSON.parse(String(calls[0].body)) as Record<string, unknown>;
+    expect(first.max_results).toBe(5);
+  });
+
+  it('T10: single 只发一次，且选中 SINGLE_MODE_PRIORITY 第一家 bocha', async () => {
+    const calls = stubFetch({ results: [] });
+    const world = WebSearch.create(setSearchMode(everyProviderKeyed(), 'single'));
+    await world.tools()[0].handler({ query: 'probe' }, TOOL_CTX);
+    expect(calls).toHaveLength(1);
+    expect(calledProviderIds(calls)).toEqual(['bocha']);
+  });
+
+  it('T11: single 下关掉 bocha 顺延到第二家 tavily，仍只发一次', async () => {
+    const calls = stubFetch({ results: [] });
+    const ctx = setSearchMode(everyProviderKeyed(), 'single');
+    (ctx.cfg as WebSearchConfigSection).providers.bocha = false;
+    const world = WebSearch.create(ctx);
+    await world.tools()[0].handler({ query: 'probe' }, TOOL_CTX);
+    expect(calls).toHaveLength(1);
+    expect(calledProviderIds(calls)).toEqual(['tavily']);
+  });
+
+  it('T12: single 下无可用引擎 → 明确报错、零请求；single 不自动换家', async () => {
+    const calls = stubFetch({ results: [] });
+    const world = WebSearch.create(setSearchMode(switchOffAll(everyProviderKeyed()), 'single'));
+    const out = (await world.tools()[0].handler({ query: 'probe' }, TOOL_CTX)) as { failed?: boolean; text: string };
+    expect(out.failed).toBe(true);
+    expect(out.text).toContain('没有可用的搜索提供商');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('T13: 显式 provider 压过 single 模式，只调指定的 kimi', async () => {
+    const calls = stubFetch({ results: [] });
+    const world = WebSearch.create(setSearchMode(everyProviderKeyed(), 'single'));
+    await world.tools()[0].handler({ query: 'probe', provider: 'kimi' }, TOOL_CTX);
+    expect(calls).toHaveLength(1);
+    expect(calledProviderIds(calls)).toEqual(['kimi']);
+  });
+});
+
+describe('搜索模式配置面与自描述（T14–T16）', () => {
+  it('T14: SINGLE_MODE_PRIORITY 与 SEARCH_PROVIDER_IDS 互为全排列，首 bocha 末 anysearch', async () => {
+    const mod = (await import('../src/prompt-vars.ts')) as unknown as Record<string, unknown>;
+    const priority = mod.SINGLE_MODE_PRIORITY as readonly string[] | undefined;
+    expect(Array.isArray(priority), 'src/prompt-vars.ts 应导出 SINGLE_MODE_PRIORITY 数组').toBe(true);
+    expect(priority).toHaveLength(SEARCH_PROVIDER_IDS.length);
+    expect(new Set(priority!).size, 'SINGLE_MODE_PRIORITY 有重复项').toBe(SEARCH_PROVIDER_IDS.length);
+    expect([...priority!].sort()).toEqual([...SEARCH_PROVIDER_IDS].sort());
+    expect(priority![0]).toBe('bocha');
+    expect(priority![priority!.length - 1]).toBe('anysearch');
+  });
+
+  it('T15: 默认 multi、面板有 searchMode 枚举项、PROVIDER_NOTE 覆盖 14 家', async () => {
+    expect(WEB_SEARCH_DEFAULTS.searchMode).toBe('multi');
+
+    const props = WEB_SEARCH_CONFIG_GROUP.schema.properties as unknown as Record<
+      string,
+      { type?: string; enum?: string[] }
+    >;
+    const modeProp = props['worlds.web-search-multi.searchMode'];
+    expect(modeProp, '面板缺少 worlds.web-search-multi.searchMode').toBeDefined();
+    expect(modeProp.type).toBe('string');
+    expect(modeProp.enum).toEqual(['multi', 'single']);
+
+    const config = (await import('../src/config.ts')) as unknown as Record<string, unknown>;
+    const note = config.PROVIDER_NOTE as Record<string, string> | undefined;
+    expect(note, 'src/config.ts 应导出 PROVIDER_NOTE').toBeDefined();
+    expect(Object.keys(note!).sort()).toEqual([...SEARCH_PROVIDER_IDS].sort());
+    for (const id of SEARCH_PROVIDER_IDS) {
+      expect(typeof note![id], `PROVIDER_NOTE 缺 ${id} 的定位短句`).toBe('string');
+      expect(note![id].trim().length, `PROVIDER_NOTE.${id} 为空串`).toBeGreaterThan(0);
+    }
+    // §C2 定位短句：anysearch 写「限速较低，配密钥后额度更大」——状态段已写「匿名可用」，同句不许重复。
+    expect(note!.anysearch).toContain('限速较低，配密钥后额度更大');
+    expect(note!.bocha).toContain('中文覆盖广、延迟低');
+  });
+
+  it('T16: describe.json 的 prompts[0].content 与 ENV_PROMPT.md 逐字相等（B3 不漂移）', () => {
+    const md = envPromptText();
+    // 契约 B3：模板必须以 LF 落盘（`.gitattributes` 钉 eol=lf），否则 autocrlf 机器上内嵌模板与文件恒不一致。
+    expect(md.includes('\r')).toBe(false);
+    const describeJson = JSON.parse(readFileSync(join(packageDir, 'describe.json'), 'utf8')) as {
+      prompts: Array<{ content: string }>;
+    };
+    expect(describeJson.prompts).toHaveLength(1);
+    expect(describeJson.prompts[0].content).toBe(md);
+  });
+});
+
