@@ -17,6 +17,14 @@ import {
 } from './config.ts';
 import type { ProviderSwitches, SearchProvider, WebSearchConfigSection } from './config.ts';
 import {
+  ProviderLedger,
+  CHECK_LABEL,
+  blockedIds,
+  failedIds,
+  summarize,
+} from './status.ts';
+import type { Checkpoint } from './status.ts';
+import {
   AVAILABLE_VAR,
   ENV_FILE_VAR,
   MODE_VAR,
@@ -24,6 +32,7 @@ import {
   PROMPT_VARS_FALLBACK,
   SINGLE_MODE_PRIORITY,
   buildPromptVars,
+  describeSearchMode,
   resolveSearchMode,
   usableProviders,
 } from './prompt-vars.ts';
@@ -411,6 +420,9 @@ export class WebSearchWorld implements World {
 
   private host: WorldHost | null = null;
 
+  /** 每家引擎本进程最近一次真实调用的台账，喂 WebUI 的检查点。 */
+  private readonly ledger = new ProviderLedger();
+
   constructor(private readonly opts: WebSearchWorldOptions) {}
 
   /** 按环境变量名取密钥；空白视为未配置。 */
@@ -446,9 +458,67 @@ export class WebSearchWorld implements World {
     return [{ ...decl, handler: this.searchHandler.bind(this) }];
   }
 
+  /**
+   * 逐家检查点。读配置或取密钥出错时给空表。
+   * 状态面只是观察窗口，不能让 WebUI 整页因为它报错。
+   */
+  private checkpoints(): Checkpoint[] {
+    try {
+      return this.ledger.checkpoints(this.opts.cfg, (name) => this.keyOf(name));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 三盏总览灯，固定少于 `MODULE_LAMP_MAX` 的 7 盏上限。
+   * 第一盏看覆盖面，第二盏看上一次真实调用，第三盏报当前聚合模式。
+   */
+  private statusLamps(): NonNullable<WorldWebUiDecl['lamps']> {
+    const rows = this.checkpoints();
+    if (!rows.length) {
+      return [{ label: '引擎', state: 'error' as const, hint: '状态读取失败，检查配置面板。' }];
+    }
+    const sum = summarize(rows);
+    const blocked = blockedIds(rows);
+    const failed = failedIds(rows);
+    return [
+      {
+        label: '引擎',
+        state: sum.ready ? 'online' as const : 'offline' as const,
+        hint: sum.blocked
+          ? `${sum.ready}/${sum.total} 家可调用，${blocked.join('、')} 因开关或密钥缺席。`
+          : `${sum.ready}/${sum.total} 家可调用，全部打开且已配密钥。`,
+      },
+      {
+        label: '上次调用',
+        state: failed.length ? 'error' as const : (this.ledger.size ? 'online' as const : 'offline' as const),
+        hint: failed.length
+          ? `本轮失败 ${failed.length} 家（${failed.join('、')}），详情看对应徽标。`
+          : (this.ledger.size ? `已记录 ${this.ledger.size} 家的调用，无失败。` : '本进程还没有调用过 web_search_multi。'),
+      },
+      {
+        label: '聚合模式',
+        state: 'online' as const,
+        hint: describeSearchMode(resolveSearchMode(this.opts.cfg)),
+      },
+    ];
+  }
+
+  /** 每家一枚徽标，顺序取 `SINGLE_MODE_PRIORITY`。超宽部分由宿主折进「更多」弹层。 */
+  private statusBadges(): NonNullable<WorldWebUiDecl['badges']> {
+    return this.checkpoints().map((row) => ({
+      label: row.id,
+      value: CHECK_LABEL[row.state],
+      tone: row.state === 'ready' ? 'on' as const : (row.state === 'anonymous' ? 'plain' as const : 'off' as const),
+    }));
+  }
+
   webUi(): WorldWebUiDecl {
     return {
       label: WEB_SEARCH_LABEL,
+      lamps: this.statusLamps(),
+      badges: this.statusBadges(),
       config: [WEB_SEARCH_CONFIG_GROUP],
       promptDocs: [
         {
@@ -566,6 +636,11 @@ export class WebSearchWorld implements World {
         runProvider(adapter, query, maxResults, key, ctx?.signal)),
     );
     const failed = runs.filter((run) => run.error !== undefined);
+    // 先写台账，WebUI 的检查点在下一帧就能看见本轮结果。
+    this.ledger.record(
+      runs.map((run) => ({ id: run.id, ok: run.error === undefined, error: run.error, hits: run.hits.length })),
+      nowIso(this.opts.timezone),
+    );
     const logged = failed.length
       ? logWarn(ctx, `${WEB_SEARCH_ID}: ${failed.length} 家提供商调用失败：${failed.map((run) => `${run.id}（${run.error}）`).join('；')}`)
       : false;

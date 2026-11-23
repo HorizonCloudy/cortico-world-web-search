@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- **新增每家引擎的状态检查点**：`src/status.ts` 落 `ProviderLedger`，14 家逐条给出 `可用 / 匿名可用 / 缺密钥 / 已关闭 / 上次失败` 五态之一。静态部分只读面板开关与密钥存在性，不发请求、不花配额，判定口径与 `usableProviders()` 逐字一致。
+- **被动记录上一次真实调用**：`searchHandler` 每轮把各家成败、错误文本（折行拉平、裁到 64 字符）与命中数写进台账，只留每家最近一次，存内存，重启即清空。
+- **WebUI 露出**：`webUi()` 新增 14 枚徽标（每家一枚，顺序取 `SINGLE_MODE_PRIORITY`）与 3 盏总览灯（`引擎` 可用数与被挡名单、`上次调用` 本轮失败家、`聚合模式` 当前模式）。灯数在宿主 `MODULE_LAMP_MAX`(7) 之内。取配置或读密钥出错时降级成一盏红字提示灯，页面不炸。
+- 未引入 `webUiClient` 构建步骤，因此没有可展开的明细表格。宿主要求声明的 `panels` 必须由产物包提供 `mount` 实现，纯数据面板不支持，故本版不声明 `panels`。
+- World id、配置键、工具名 `web_search_multi`、事件与 `describe.json` 全部不变（tools / events / prompts 三段无改动，无需重生成）。搜索行为不变，新增测试 17 条。
+
 ## 0.3.1
 
 - **显示名改为「聚合搜索」**：新增 `cortico.displayName` 与 `cortico.locales`（zh 聚合搜索 / en Aggregated Search）。`WorldDefinition.label` 与 `webUi().label` 改读新常量 `WEB_SEARCH_LABEL`，此前两处都用 id `web-search-multi`，市场与宿主 World 列表显示的是包名派生的英文 id。
