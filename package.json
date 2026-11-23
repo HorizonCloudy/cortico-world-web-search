@@ -27,6 +27,7 @@
   },
   "files": [
     "src",
+    "LICENSE",
     "README.md",
     "CHANGELOG.md",
     "describe.json"
