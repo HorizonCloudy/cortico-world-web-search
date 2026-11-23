@@ -1,7 +1,7 @@
 import type { WorldDefinition } from 'cortico/world.ts';
 import { describeTools } from 'cortico/world.ts';
 import type { WebSearchConfigSection } from './config.ts';
-import { WEB_SEARCH_DEFAULTS, WEB_SEARCH_ID } from './config.ts';
+import { WEB_SEARCH_DEFAULTS, WEB_SEARCH_ID, WEB_SEARCH_LABEL } from './config.ts';
 import { WEB_SEARCH_TOOL_DECLS, WebSearchWorld } from './world.ts';
 
 /**
@@ -12,7 +12,7 @@ import { WEB_SEARCH_TOOL_DECLS, WebSearchWorld } from './world.ts';
  */
 export const WebSearch: WorldDefinition<WebSearchConfigSection> = {
   id: WEB_SEARCH_ID,
-  label: WEB_SEARCH_ID,
+  label: WEB_SEARCH_LABEL,
   defaults: () => structuredClone(WEB_SEARCH_DEFAULTS),
   create: (ctx) => new WebSearchWorld({
     cfg: ctx.cfg,

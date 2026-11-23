@@ -7,6 +7,9 @@ import type { WorldSection } from 'cortico/world.ts';
  */
 export const WEB_SEARCH_ID = 'web-search-multi';
 
+/** World 显示名。用于 `WorldDefinition.label` 与 `webUi().label`，与 package.json 的 `cortico.displayName` 一致。 */
+export const WEB_SEARCH_LABEL = '聚合搜索';
+
 /** 聚合搜索支持的提供商，按价格从低到高（官方价随变动，仅作量级参考）。 */
 export type SearchProvider =
   | 'anysearch'

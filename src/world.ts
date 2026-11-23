@@ -13,6 +13,7 @@ import {
   WEB_SEARCH_CONFIG_GROUP,
   WEB_SEARCH_DEFAULTS,
   WEB_SEARCH_ID,
+  WEB_SEARCH_LABEL,
 } from './config.ts';
 import type { ProviderSwitches, SearchProvider, WebSearchConfigSection } from './config.ts';
 import {
@@ -447,7 +448,7 @@ export class WebSearchWorld implements World {
 
   webUi(): WorldWebUiDecl {
     return {
-      label: WEB_SEARCH_ID,
+      label: WEB_SEARCH_LABEL,
       config: [WEB_SEARCH_CONFIG_GROUP],
       promptDocs: [
         {

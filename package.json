@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-web-search-multi",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Cortico World: 多 provider 聚合搜索（Anysearch / Tavily / Exa / Bocha / 阿里 IQS / 智谱 / Perplexity / Serper / Brave），跨源去重，暴露 web_search_multi 工具",
   "license": "MIT",
@@ -17,6 +17,11 @@
   "packageManager": "pnpm@11.28.6",
   "main": "./src/index.ts",
   "cortico": {
+    "displayName": "聚合搜索",
+    "locales": {
+      "zh": { "displayName": "聚合搜索" },
+      "en": { "displayName": "Aggregated Search" }
+    },
     "kind": "world",
     "api": 6,
     "describe": "describe.json",

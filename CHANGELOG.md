@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- **显示名改为「聚合搜索」**：新增 `cortico.displayName` 与 `cortico.locales`（zh 聚合搜索 / en Aggregated Search）。`WorldDefinition.label` 与 `webUi().label` 改读新常量 `WEB_SEARCH_LABEL`，此前两处都用 id `web-search-multi`，市场与宿主 World 列表显示的是包名派生的英文 id。
+- World id、配置键 `worlds.web-search-multi.*`、工具名 `web_search_multi` 与事件 `web-search-multi.started` 全部不变，已有配置与提示词无需迁移。
+- 搜索行为无改动。
+
 ## 0.3.0
 
 - **环境提示词三项变量化**：`src/ENV_PROMPT.md` 里「可用引擎范围」「已启用引擎的搜索方案（调用顺序/组合方式/结果汇总/失败回退）」「搜索模式」改为模板变量 `{{web_search_multi.availableProviders}}` / `{{web_search_multi.searchPlan}}` / `{{web_search_multi.searchMode}}`，由 `envPromptVars()` 按当前配置现算。可用范围按面板开关 + 实际密钥判定，不再是与配置脱钩的静态列表。
