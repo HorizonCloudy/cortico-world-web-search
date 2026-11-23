@@ -28,6 +28,23 @@ export interface Checkpoint {
   id: SearchProvider;
   state: CheckState;
   detail: string;
+  /** 配置面板里这家的开关。缺键视为打开。 */
+  switchOn: boolean;
+  /** 这家的密钥是否已配置。 */
+  keyed: boolean;
+  /** 这家的密钥变量名，明细表直接印出来，省得用户去翻 README。 */
+  secretName: string;
+  /** 本进程内这家最近一次调用的时间戳。没调过是空串。 */
+  lastTs: string;
+}
+
+/** `webUi().panels[id].invoke('state')` 的回执，也是 `src/webui.ts` 读的表结构。 */
+export interface PanelState extends CheckSummary {
+  /** 本次读取的时刻，`nowIso(timezone)` 格式。 */
+  updatedAt: string;
+  /** 当前聚合模式的界面文案。 */
+  mode: string;
+  rows: Checkpoint[];
 }
 
 /** 摘要计数，给状态灯与徽标用。 */
@@ -100,28 +117,41 @@ export class ProviderLedger {
   ): Checkpoint[] {
     const switches: ProviderSwitches = cfg?.providers ?? WEB_SEARCH_DEFAULTS.providers;
     const rows: Checkpoint[] = [];
+    const push = (
+      id: SearchProvider,
+      state: CheckState,
+      detail: string,
+      switchOn: boolean,
+      keyed: boolean,
+      lastTs: string,
+    ): void => {
+      rows.push({ id, state, detail, switchOn, keyed, secretName: PROVIDER_SECRET[id], lastTs });
+    };
     for (const id of SINGLE_MODE_PRIORITY) {
       const secretName = PROVIDER_SECRET[id];
       const anonymous = ANONYMOUS_PROVIDERS.has(id);
+      const switchOn = switches[id] !== false;
       const key = keyOf(secretName);
+      const keyed = Boolean(key);
       const run = this.runs.get(id);
-      if (switches[id] === false) {
-        rows.push({ id, state: 'off', detail: run?.error ? `关闭前上次失败：${run.error}` : '配置面板已关闭' });
+      const lastTs = run?.ts ?? '';
+      if (!switchOn) {
+        push(id, 'off', run && !run.ok ? `关闭前上次失败：${run.error}` : '配置面板已关闭', false, keyed, lastTs);
         continue;
       }
       if (!key && !anonymous) {
-        rows.push({ id, state: 'no-key', detail: `缺少密钥 ${secretName}` });
+        push(id, 'no-key', `缺少密钥 ${secretName}`, true, false, lastTs);
         continue;
       }
       if (run && !run.ok) {
-        rows.push({ id, state: 'last-error', detail: run.error || '上次调用失败' });
+        push(id, 'last-error', run.error || '上次调用失败', true, keyed, lastTs);
         continue;
       }
       if (!key && anonymous) {
-        rows.push({ id, state: 'anonymous', detail: run ? `匿名调用 ${run.hits} 条` : '匿名可用，尚未调用' });
+        push(id, 'anonymous', run ? `匿名调用 ${run.hits} 条` : '匿名可用，尚未调用', true, false, lastTs);
         continue;
       }
-      rows.push({ id, state: 'ready', detail: run ? `上次成功 ${run.hits} 条` : '已配密钥，尚未调用' });
+      push(id, 'ready', run ? `上次成功 ${run.hits} 条` : '已配密钥，尚未调用', true, true, lastTs);
     }
     return rows;
   }

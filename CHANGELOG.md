@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- **新增「引擎状态」明细表面板**：`webUi()` 声明 `panels: [{ id: 'engines', getMethods: ['state'] }]`，`invoke('state')` 回 `PanelState`（14 行 + 汇总计数 + `updatedAt` + 当前模式）。每行含状态、说明文字、开关、密钥变量名与上次调用时间戳。
+- **新增浏览器端产物** `src/webui.ts` → `dist/webui.js`（`cortico.webUiClient`）。它零依赖、零 import，宿主用 `import()` 直接加载。面板按 `ctx.interval` 每 5 秒刷新，卸载即停；文案随 `ctx.language` 取 zh / en 两份。
+- **新增构建步骤**：`tsconfig.webui.json`（`types: []`，`include: src/webui.ts`）与 `pnpm build:webui`。`files` 加 `dist`，`.gitignore` 加 `dist/`（`files` 优先，npm 包仍带产物）。
+- `Checkpoint` 增列 `switchOn` / `keyed` / `secretName` / `lastTs`，供明细表直接印出密钥变量名。
+- 面板 id 两侧对齐由测试锁定：`webUi().panels[0].id` 与 `src/webui.ts` 里 `panels` 的键必须同为 `engines`。
+- World id、配置键、工具名、事件与 `describe.json` 不变（新增的 lamps / badges / panels / invoke 都不进自描述三段）。测试 64 条通过。官方 `exportDescribe()` 与 `checkDescribe()` 本机实测：warnings 0，failures 0。
+
 ## 0.4.0
 
 - **新增每家引擎的状态检查点**：`src/status.ts` 落 `ProviderLedger`，14 家逐条给出 `可用 / 匿名可用 / 缺密钥 / 已关闭 / 上次失败` 五态之一。静态部分只读面板开关与密钥存在性，不发请求、不花配额，判定口径与 `usableProviders()` 逐字一致。

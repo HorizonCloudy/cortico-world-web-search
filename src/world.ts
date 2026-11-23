@@ -23,7 +23,10 @@ import {
   failedIds,
   summarize,
 } from './status.ts';
-import type { Checkpoint } from './status.ts';
+import type { Checkpoint, PanelState } from './status.ts';
+
+/** WebUI 明细表的面板 id。`src/webui.ts` 的 `panels` 键必须与它逐字相同。 */
+const WEB_SEARCH_PANEL_ID = 'engines';
 import {
   AVAILABLE_VAR,
   ENV_FILE_VAR,
@@ -514,11 +517,36 @@ export class WebSearchWorld implements World {
     }));
   }
 
+  /** 明细表的回执。读配置出错时直接抛，宿主把面板转成错误卡。 */
+  private panelState(): PanelState {
+    const rows = this.checkpoints();
+    return {
+      updatedAt: nowIso(this.opts.timezone),
+      mode: describeSearchMode(resolveSearchMode(this.opts.cfg)),
+      ...summarize(rows),
+      rows,
+    };
+  }
+
+  /** 面板数据面。只认 `state` 一个方法，其余抛错，让 WebUI 报出具体名字。 */
+  private async invokePanel(panel: string, method: string): Promise<unknown> {
+    if (panel !== WEB_SEARCH_PANEL_ID) throw new Error(`未知面板 ${panel}`);
+    if (method !== 'state') throw new Error(`未知方法 ${method}`);
+    return this.panelState();
+  }
+
   webUi(): WorldWebUiDecl {
     return {
       label: WEB_SEARCH_LABEL,
       lamps: this.statusLamps(),
       badges: this.statusBadges(),
+      panels: [{
+        id: WEB_SEARCH_PANEL_ID,
+        title: '引擎状态',
+        description: '14 家引擎逐条报开关、密钥与上一次真实调用的结果。每 5 秒自动刷新。',
+        getMethods: ['state'],
+      }],
+      invoke: (panel, method) => this.invokePanel(panel, method),
       config: [WEB_SEARCH_CONFIG_GROUP],
       promptDocs: [
         {

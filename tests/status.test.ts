@@ -4,7 +4,7 @@
  * 第二层测 `webUi()` 暴露的 lamps 与 badges，并确认新字段不影响干装载。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -209,5 +209,77 @@ describe('webUi status surface', () => {
   it('still mounts clean with the new lamps and badges', async () => {
     const report = await dryMountWorld(WebSearch, { scratchDir: scratchDir(), packageDir });
     expect(report.failures).toEqual([]);
+  });
+});
+
+describe('engines panel data plane', () => {
+  function newWorld(secret: (name: string) => string = NO_KEY) {
+    const ctx = fakeWorldContext(WebSearch, { scratchDir: scratchDir(), packageDir });
+    Object.assign(ctx.cfg, { enabled: true });
+    (ctx.cfg as WebSearchConfigSection).maxResults = 5;
+    ctx.secret = secret;
+    return WebSearch.create(ctx);
+  }
+
+  /** 宿主按这个键去产物里取面板实现，两侧写死成一个字面量，靠这条测试锁住不漂。 */
+  const PANEL_ID = 'engines';
+
+  it('declares exactly one read-only panel', () => {
+    const panels = newWorld().webUi?.().panels ?? [];
+    expect(panels).toHaveLength(1);
+    expect(panels[0]?.id).toBe(PANEL_ID);
+    expect(panels[0]?.getMethods).toEqual(['state']);
+  });
+
+  it('keeps the browser bundle panel key equal to the declared panel id', () => {
+    const source = readFileSync(join(packageDir, 'src', 'webui.ts'), 'utf8');
+    const match = source.match(/panels:\s*\{\s*([A-Za-z0-9_-]+):/);
+    expect(match?.[1]).toBe(PANEL_ID);
+  });
+
+  it('answers state with 14 rows and the summary counts', async () => {
+    const world = newWorld((name) => (name === 'TAVILY_API_KEY' ? 'fake-key' : ''));
+    const state = await world.webUi?.().invoke?.(PANEL_ID, 'state', []) as {
+      total: number; ready: number; blocked: number; failed: number; updatedAt: string; mode: string;
+      rows: Array<{ id: string; state: string; keyed: boolean; switchOn: boolean; secretName: string; lastTs: string }>;
+    };
+    expect(state.rows).toHaveLength(14);
+    // ready 含匿名可用的 anysearch，所以只配一家密钥时是 2 家。
+    expect(state.total).toBe(14);
+    expect(state.ready).toBe(2);
+    expect(state.blocked).toBe(12);
+    expect(state.failed).toBe(0);
+    expect(state.updatedAt).toMatch(/T/);
+    expect(state.mode).toContain('multi');
+    const tavily = state.rows.find((r) => r.id === 'tavily');
+    expect(tavily?.state).toBe('ready');
+    expect(tavily?.keyed).toBe(true);
+    expect(tavily?.switchOn).toBe(true);
+    expect(tavily?.secretName).toBe('TAVILY_API_KEY');
+    expect(tavily?.lastTs).toBe('');
+  });
+
+  it('rejects an unknown panel or method by name', async () => {
+    const invoke = newWorld().webUi?.().invoke;
+    await expect(invoke?.('nope', 'state', [])).rejects.toThrow('nope');
+    await expect(invoke?.(PANEL_ID, 'reset', [])).rejects.toThrow('reset');
+  });
+
+  it('shows the error text and the timestamp of the last failed call', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('exa')) throw new Error('HTTP 402 quota exceeded');
+      return { ok: true, status: 200, json: async () => ({ results: [] }) } as unknown as Response;
+    }));
+    const world = newWorld(ALL_KEYS);
+    await world.tools()[0].handler({ query: 'hello' }, TOOL_CTX);
+
+    const state = await world.webUi?.().invoke?.(PANEL_ID, 'state', []) as {
+      failed: number; rows: Array<{ id: string; state: string; detail: string; lastTs: string }>;
+    };
+    const exa = state.rows.find((r) => r.id === 'exa');
+    expect(exa?.state).toBe('last-error');
+    expect(exa?.detail).toContain('402');
+    expect(exa?.lastTs).toMatch(/T/);
+    expect(state.failed).toBe(1);
   });
 });

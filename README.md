@@ -137,7 +137,15 @@ World 页面上每家常驻引擎都有一枚徽标，共 14 枚。徽标取五�
 
 「上次失败」与命中数只记本进程最近一次，存在内存里，重启即清空。跨重启的历史属于运行日志，不在这个面板。
 
-要拿到每家的错误全文与时间戳，目前只能看运行日志。WebUI 上可展开的明细表需要 `webUiClient` 产物包，本包没有引入构建步骤。
+要看得更细就开「引擎状态」页签。它是一张 14 行的明细表，逐行报状态、说明文字、开关、密钥变量名与上一次调用的时间戳。表每 5 秒自动刷新，也可以手点刷新。数据走 `webUi().panels[id='engines']` 的 `invoke('state')`，面板实现打包在 `dist/webui.js`。
+
+发布前要先生成产物：
+
+```
+pnpm build:webui   # tsc -p tsconfig.webui.json，产出 dist/webui.js
+```
+
+`dist/` 已进 `.gitignore`，但列在 `package.json` 的 `files` 里，`files` 优先，所以 npm 包里带着它。改过 `src/webui.ts` 记得重跑 `build:webui`，否则 npm 上的产物与源码不一致。
 
 ## 各提供商价格与约束（官方量级参考，随官方变动）
 
@@ -173,9 +181,12 @@ SDK 来自 `cortico` devDependency（`^0.2.17`），不需要 vendor submodule�
 
 ```
 pnpm install
-pnpm typecheck   # tsc --noEmit
-pnpm test        # vitest run：干装载 + fetch stub，不联网、不启宿主
+pnpm typecheck     # tsc --noEmit
+pnpm build:webui   # tsc -p tsconfig.webui.json，产出 dist/webui.js
+pnpm test          # vitest run：干装载 + fetch stub，不联网、不启宿主
 ```
+
+`src/webui.ts` 走独立的 `tsconfig.webui.json`。那份配置 `types: []`，禁掉 node 类型，产物又必须零依赖，所以这个文件不许 import 任何东西。宿主用 `import()` 直接加载 `dist/webui.js`，产物里出现裸导入会在浏览器侧解析失败。
 
 在 Cortico 检出根验证装载：
 
