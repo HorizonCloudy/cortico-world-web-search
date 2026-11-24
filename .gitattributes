@@ -2,3 +2,6 @@
 # isDeepStrictEqual 比对（cortico/extensions/describe-export.ts:172）；autocrlf=true 的
 # Windows 机器若把模板签出成 CRLF，check:extension 的自描述检查会恒失败。
 * text=auto eol=lf
+
+# WebP 头像是二进制，明确排除 eol 转换。
+*.webp binary

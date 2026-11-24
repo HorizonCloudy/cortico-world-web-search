@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 (2026-11-24)
+
+- 新增 `cortico.icon` 静态头像：`assets/icon.webp`（512×512 WebP，quality 85）。`files` 加入 `assets`，确保 npm 包携带该文件，头像不会指向空路径。
+- 无代码与搜索行为改动；头像不进自描述三段，`describe.json` 无需重生成。
+
 ## 0.5.0
 
 - **新增「引擎状态」明细表面板**：`webUi()` 声明 `panels: [{ id: 'engines', getMethods: ['state'] }]`，`invoke('state')` 回 `PanelState`（14 行 + 汇总计数 + `updatedAt` + 当前模式）。每行含状态、说明文字、开关、密钥变量名与上次调用时间戳。
